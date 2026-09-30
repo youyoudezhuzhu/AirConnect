@@ -68,6 +68,9 @@ class ServiceTest(unittest.TestCase):
         shutil.copytree(APP_DIR, cls.target, dirs_exist_ok=True)
 
         cls.argv_log = root / "argv.log"
+        # 全新 clone 里 fnos/app/bin 不存在（二进制由 build.sh 生成、被 .gitignore
+        # 排除），必须先建出来，否则写假二进制会 FileNotFoundError。
+        (cls.target / "bin").mkdir(parents=True, exist_ok=True)
         for name in ("airupnp", "aircast"):
             stub = cls.target / "bin" / name
             stub.write_text(STUB, encoding="utf-8")
@@ -389,6 +392,7 @@ class ShutdownTest(unittest.TestCase):
             for sub in ("var", "etc", "home"):
                 (root / sub).mkdir(parents=True, exist_ok=True)
             marker = root / "argv.log"
+            (target / "bin").mkdir(parents=True, exist_ok=True)
             for name in ("airupnp", "aircast"):
                 stub = target / "bin" / name
                 stub.write_text(STUB, encoding="utf-8")

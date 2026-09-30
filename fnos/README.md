@@ -10,6 +10,19 @@ iPhone / iPad / Mac 的 AirPlay 列表里，点一下就能播放。
 > 本目录只包含**打包工程**（manifest / 生命周期脚本 / 管理服务 / Web UI / 构建脚本）。
 > 上游 AirConnect 的 C 源码在仓库根目录，未做任何修改。
 
+## 0. 界面
+
+| 播放设备 | 设置 |
+|---|---|
+| ![播放设备](docs/screenshots/devices.png) | ![设置](docs/screenshots/settings.png) |
+
+| 日志 | 手机端（飞牛手机 App 内） |
+|---|---|
+| ![日志](docs/screenshots/logs.png) | ![手机端](docs/screenshots/mobile.png) |
+
+<p align="center"><img src="docs/screenshots/icon.png" width="128" alt="AirConnect"></p>
+
+
 ---
 
 ## 1. 产物
