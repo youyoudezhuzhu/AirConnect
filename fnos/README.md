@@ -96,8 +96,10 @@ AirConnect-1.12.4-1.fpk
 2. 打开应用 → 「播放设备」里确认音响已被发现（没有就点「重新扫描」，最多等 30 秒）。
 3. 不需要的播放器（电视、投影等）把「启用」关掉。
 4. iPhone 控制中心 → AirPlay → 选择对应音箱名（默认是原名 + `+`）。
-5. **Sonos / Heos 用户**：在「设置」里把延迟切到 `Sonos / Heos 预设 1000:2000`，
-   否则会卡顿或不出声。
+5. **延迟**：默认已是「低延迟（推荐，500:0）」。实测 `0:0` 会让 AirConnect
+   照用 iOS 宣告的 1750ms，暂停/恢复/拖进度条各慢约 1.75 秒（见
+   [`docs/LATENCY_S12.md`](docs/LATENCY_S12.md)）。
+   **Sonos / Heos 用户**要反过来切到 `Sonos / Heos 预设 1000:2000`，否则会卡顿或不出声。
 
 管理界面同时可以通过 `http://<NAS_IP>:18888` 直连。
 
@@ -168,6 +170,12 @@ iPhone / iPad / Mac
 10. **设备列表要先把 XML 合并回设置再写回**，否则「GET 设置 → 期间发现新设备 →
     POST 保存」会把刚发现的设备条目抹掉（`acconf.sync_devices` 里做过一次回归修复）。
 
+11. **`<latency>` 的 rtp 段写 0 会照用 iOS 宣告的延迟。** 代码里就一行
+    （`raop_streamer.c:648`：`if (!ctx->latency) ctx->latency = rtp_now - rtp_now_latency;`），
+    真机量到的宣告值是 **1750 ms**，直接变成开播/恢复的固定延迟。
+    默认值因此定为 `500:0`。完整实测见
+    [`docs/LATENCY_S12.md`](docs/LATENCY_S12.md)。
+
 ## 6. 测试
 
 ```bash
@@ -181,6 +189,9 @@ python3 tests/test_service.py
 
 # 日志轮转的 shell 断言（从 cmd/main 里提取真实函数跑）
 ./tools/test-logrotate.sh
+
+# 诊断用：独立探测 DLNA 渲染器的 TransportState / RelTime（不依赖 AirConnect 日志）
+python3 tools/dlna_probe.py --seconds 300 --out /tmp/probe.log
 
 # 模拟完整安装 → 启动 → 配置变更 → 停止 → 卸载
 AIRCONNECT_SIM_ROOT=/tmp/fpk-sim ./tools/simulate-install.sh dist/AirConnect-<version>.fpk

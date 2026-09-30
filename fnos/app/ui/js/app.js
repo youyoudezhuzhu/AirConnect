@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const LATENCY_PRESETS = ['0:0', '1000:2000', '500:1000'];
+const LATENCY_PRESETS = ['500:0', '0:0', '1000:2000', '500:1000'];
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -289,7 +289,7 @@ function collectSettings() {
   return {
     mode: $('f-mode').value,
     name_suffix: $('f-name-suffix').value,
-    latency: latency || '0:0',
+    latency: latency || '500:0',
     codec: $('f-codec').value,
     binding: $('f-binding').value || '?',
     main_log: $('f-main-log').value,

@@ -62,7 +62,11 @@ DEFAULTS: Dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
     "mode": "upnp",
     "name_suffix": "+",
-    "latency": "0:0",
+    # 实测（小爱音箱 S12，2026-10-01）：rtp 段为 0 时，AirConnect 会照用 iOS
+    # 在同步包里宣告的延迟 —— 真机量到的是 1750ms，直接变成开播/恢复的固定延迟。
+    # 500ms 是上游文档写明的推荐下限（"Below 500ms is not recommended"），
+    # 既能把这段压掉 1.25 秒，又保留基本的抗抖动余量。
+    "latency": "500:0",
     "codec": "flac",
     "http_length": -1,
     "stream_type": "broadcast",
@@ -153,9 +157,9 @@ def validate(data: Dict[str, Any]) -> Dict[str, Any]:
         raise ConfigError("AirPlay 名称后缀最多 20 个字符")
     out["name_suffix"] = suffix
 
-    latency = str(out.get("latency", "0:0")).strip()
+    latency = str(out.get("latency", "500:0")).strip()
     if latency and not LATENCY_RE.match(latency):
-        raise ConfigError("延迟格式应为 [rtp][:http][:f]，例如 0:0 或 1000:2000")
+        raise ConfigError("延迟格式应为 [rtp][:http][:f]，例如 500:0 或 1000:2000")
     out["latency"] = latency
 
     codec = str(out.get("codec", "flac")).strip().lower()

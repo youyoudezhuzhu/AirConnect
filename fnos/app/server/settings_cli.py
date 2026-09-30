@@ -37,7 +37,8 @@ LEVEL_MAP = {
                "raop_log": "debug", "util_log": "debug"},
 }
 
-WIZARD_KEYS = ("wizard_mode", "wizard_name_suffix", "wizard_log_level")
+WIZARD_KEYS = ("wizard_mode", "wizard_name_suffix", "wizard_log_level",
+               "wizard_latency")
 
 
 def _fail(message: str) -> int:
@@ -101,6 +102,10 @@ def cmd_wizard() -> int:
 
     if "wizard_name_suffix" in os.environ:
         updates["name_suffix"] = os.environ["wizard_name_suffix"].strip()
+
+    latency = os.environ.get("wizard_latency", "").strip()
+    if latency:
+        updates["latency"] = latency
 
     level = os.environ.get("wizard_log_level", "").strip().lower()
     if level:

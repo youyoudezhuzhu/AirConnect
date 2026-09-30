@@ -51,6 +51,8 @@ class ConfigTests(unittest.TestCase):
         clean = self.acconf.validate({})
         self.assertEqual(clean["mode"], "upnp")
         self.assertEqual(clean["name_suffix"], "+")
+        # 默认必须是低延迟值：0:0 会照用 iOS 宣告的 1.75 秒
+        self.assertEqual(clean["latency"], "500:0")
         self.assertEqual(clean["port_base"], self.acpath.DEFAULT_PORT_BASE)
 
     def test_rejects_bad_values(self):
@@ -77,7 +79,8 @@ class ConfigTests(unittest.TestCase):
                       "wav", "pcm", "FLAC"):
             with self.subTest(codec=codec):
                 self.assertTrue(self.acconf.validate({"codec": codec})["codec"])
-        for latency in ("0:0", "1000:2000", "1000:2000:f", "-500:0", ""):
+        for latency in ("500:0", "0:0", "1000:2000", "1000:2000:f", "-500:0",
+                        "300:0:f", ""):
             with self.subTest(latency=latency):
                 self.acconf.validate({"latency": latency})
 
@@ -107,7 +110,7 @@ class ConfigTests(unittest.TestCase):
         # <common> 必须排在全局键之前，设备在最后
         self.assertLess(xml.index("</common>"), xml.index("<main_log>"))
         self.assertLess(xml.index("<ports>"), xml.index("</airupnp>"))
-        for key in ("<enabled>1</enabled>", "<codec>flac</codec>", "<latency>0:0</latency>",
+        for key in ("<enabled>1</enabled>", "<codec>flac</codec>", "<latency>500:0</latency>",
                     "<binding>?</binding>", "<ports>18300:128</ports>",
                     "<max_players>32</max_players>"):
             self.assertIn(key, xml)

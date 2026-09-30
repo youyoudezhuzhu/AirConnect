@@ -32,6 +32,23 @@
         ]
     },
     {
+        "stepTitle": "播放延迟",
+        "items": [
+            {
+                "type": "radio",
+                "field": "wizard_latency",
+                "label": "延迟 / 缓冲",
+                "initValue": "500:0",
+                "options": [
+                    { "label": "低延迟（推荐，500:0）", "value": "500:0" },
+                    { "label": "跟随 AirPlay 宣告（0:0）", "value": "0:0" },
+                    { "label": "Sonos / Heos（1000:2000）", "value": "1000:2000" }
+                ],
+                "helpText": "AirConnect 要先攒一段 AirPlay 音频才转发给音箱，攒得越多、暂停/恢复/拖进度条的延迟越大。实测：选 0:0 时它会照用 iOS 宣告的 1750ms，暂停恢复各慢约 1.75 秒；500:0 是上游文档推荐的抗抖动下限。Sonos / Heos 必须用 1000:2000，否则会卡顿。"
+            }
+        ]
+    },
+    {
         "stepTitle": "日志级别",
         "items": [
             {
