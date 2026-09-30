@@ -169,8 +169,18 @@ class RotationThread(threading.Thread):
         self._stop_event = threading.Event()
 
     def run(self) -> None:  # noqa: D102
+        warned: set = set()
         while not self._stop_event.wait(self.interval):
             for path in self.paths:
+                # 权限不足时 trim_inplace 会静默返回 False（它只捕获 OSError），
+                # 表现成「日志一直涨、永远不轮转」。这里把它显式暴露出来 ——
+                # 真机上踩过一次：日志文件被 root 创建，应用用户既写不进也轮转不了。
+                if os.path.exists(path) and not os.access(path, os.W_OK):
+                    if path not in warned:
+                        warned.add(path)
+                        logging.getLogger("airconnect.logrotate").warning(
+                            "日志文件当前用户不可写，无法轮转（属主/权限不对）：%s", path)
+                    continue
                 trim_inplace(path)
 
     def stop(self) -> None:

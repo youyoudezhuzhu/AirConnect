@@ -190,6 +190,14 @@ start_server() {
     rm -f "$SERVER_PID"
 
     # 运行目录归属应用用户，确保降权后可写
+    # ⚠️ 必须先建出日志文件、再统一 chown。
+    # 本脚本以 root 运行，`: >> 不存在的文件` 会**由 root 创建**它；而管理服务是
+    # 降权成应用用户跑的，于是既写不进自己的日志（server.log 一直是 0 字节），
+    # 日志轮转也会因权限不足而静默失效（trim_inplace 捕获 OSError 后返回 False）。
+    # 真机踩过：server.log 从安装到第一次升级之间始终是 root:root 0 字节。
+    : >> "$MAIN_LOG"
+    : >> "$SERVER_LOG"
+
     if id -u "$RUN_USER" >/dev/null 2>&1; then
         chown -R "$RUN_USER" "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
         chmod 750 "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
@@ -199,9 +207,6 @@ start_server() {
         chmod 775 "$APP" 2>/dev/null || true
     fi
     rm -f "$GATEWAY_SOCKET" 2>/dev/null || true
-
-    : >> "$MAIN_LOG"
-    : >> "$SERVER_LOG"
     # 注意：不能用 `nohup run_as_app_user ...` —— nohup 是外部命令，看不见 shell 函数。
     # 这里在子 shell 内直接调用函数；函数末尾用 exec 替换自身，因此 $! 就是最终 PID。
     (
