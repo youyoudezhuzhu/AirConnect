@@ -1,5 +1,7 @@
 # AirConnect for fnOS（飞牛 OS）—— .fpk 打包工程
 
+[![fnOS FPK](https://github.com/youyoudezhuzhu/AirConnect/actions/workflows/fnos-fpk.yml/badge.svg?branch=fnos)](https://github.com/youyoudezhuzhu/AirConnect/actions/workflows/fnos-fpk.yml)
+
 把 [philippe44/AirConnect](https://github.com/philippe44/AirConnect) 编译并封装成
 飞牛 OS（fnOS）可以一键安装的原生应用包（`.fpk`）。
 
