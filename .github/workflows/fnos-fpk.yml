@@ -204,6 +204,18 @@ jobs:
             exit 1
           fi
 
+          # ★ 上传之后必须把正文里的体积/SHA-256 改成**实际发布出去的那份**。
+          # CI 会覆盖同 tag 下已存在的资产（本地手动传的那份），如果正文还写着
+          # 本地包的校验值，用户按 sha256 一验就会以为文件损坏 —— 本仓库踩过。
+          ACTUAL_SIZE=$(echo "$RESP" | python3 -c 'import json,sys;print(json.load(sys.stdin)["size"])')
+          ACTUAL_SHA=$(sha256sum "$FPK" | cut -d' ' -f1)
+          BODY=$(jq -n --arg name "$NAME" --arg size "$ACTUAL_SIZE" --arg sha "$ACTUAL_SHA" \
+            '($name + "\n\n- 体积: " + $size + " 字节\n- SHA-256: `" + $sha + "`")')
+          curl -sS -X PATCH -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+            "${API}/releases/${RID}" -d "$(jq -n --arg b "$BODY" '{body:$b}')" >/dev/null
+          echo "Release 正文已同步为资产实际值：${ACTUAL_SIZE} 字节 / ${ACTUAL_SHA}"
+
           # 收尾自检：直链必须真的能下到东西（CI 里"上传成功"但直链 404 踩过）
           URL="https://github.com/${REPO}/releases/download/${TAG}/${NAME}"
           CODE=$(curl -sS -o /dev/null -w '%{http_code}' -L "$URL" || true)
