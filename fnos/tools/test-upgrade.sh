@@ -67,7 +67,12 @@ install_stubs() {
 # 假桥接二进制：
 #   * -h 打印版本号（管理服务要拿它显示版本）
 #   * 模仿 -I 的自动保存：把发现的设备写进 -x 指定的配置文件里
-case "$*" in *-h*) echo "v1.12.4 (simulated stub)"; exit 0;; esac
+# 只认**独立的** -h：写成 `case "$*" in *-h*)` 会误判 —— 临时目录名里一旦
+# 出现 "-h"（CI 上就抽到了 /tmp/airconnect-e2e-h2qu76sj），假二进制会以为在问
+# 版本、打印一行就退出，监管进程便无限重启它，测试全线崩。
+for a in "$@"; do
+    if [ "$a" = "-h" ]; then echo "v1.12.4 (simulated stub)"; exit 0; fi
+done
 XML=""; prev=""
 for a in "$@"; do [ "$prev" = "-x" ] && XML="$a"; prev="$a"; done
 echo "[00:00:00.100] main:1407 Starting $(basename "$0") version: v1.12.4 (stub)"

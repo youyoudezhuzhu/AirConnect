@@ -37,9 +37,12 @@ SERVER_DIR = APP_DIR / "server"
 
 STUB = """#!/bin/sh
 # 假桥接二进制：只回放日志并常驻
-case "$*" in
-  *-h*) echo "v1.12.4 (stub)"; exit 0 ;;
-esac
+# 只认**独立的** -h：写成 `case "$*" in *-h*)` 会误判 —— 临时目录名里一旦
+# 出现 "-h"（CI 上就抽到了 /tmp/airconnect-e2e-h2qu76sj），假二进制会以为在问
+# 版本、打印一行就退出，监管进程便无限重启它，测试全线崩。
+for a in "$@"; do
+  if [ "$a" = "-h" ]; then echo "v1.12.4 (stub)"; exit 0; fi
+done
 echo "ARGV $0 $*" >> "$STUB_ARGV_LOG"
 echo "[00:00:00.100] main:1407 Starting $(basename "$0") version: v1.12.4 (stub)"
 echo "[00:00:00.200] Start:1112 Binding to iface 127.0.0.1:0 [lo]"
@@ -57,7 +60,11 @@ def free_port() -> int:
 class ServiceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.tmp = tempfile.TemporaryDirectory(prefix="airconnect-e2e-")
+        # 临时目录名里**故意**放一个 "-h"：假二进制的参数解析如果写成
+        # `case "$*" in *-h*)`，路径里的 "-h" 就会让它以为在问版本、打印一行
+        # 就退出，监管进程随即无限重启它 —— CI 上真的因此全线崩过。
+        # 把它固定进测试，避免以后改回去。
+        cls.tmp = tempfile.TemporaryDirectory(prefix="airconnect-e2e-h")
         root = Path(cls.tmp.name)
         cls.target = root / "target"
         cls.var = root / "var"
@@ -385,7 +392,7 @@ class ShutdownTest(unittest.TestCase):
     """单独一个用例：验证 SIGTERM 之后没有孤儿桥接进程。"""
 
     def test_sigterm_leaves_no_orphans(self):
-        with tempfile.TemporaryDirectory(prefix="airconnect-stop-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="airconnect-stop-h") as tmp:
             root = Path(tmp)
             target = root / "target"
             shutil.copytree(APP_DIR, target, dirs_exist_ok=True)
