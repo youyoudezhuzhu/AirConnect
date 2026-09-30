@@ -98,19 +98,26 @@ jobs:
       - name: 校验 fpk 双层结构
         run: |
           FPK=$(ls fnos/dist/*.fpk)
-          echo "--- 外层 ---"; tar tzf "$FPK"
+          # 列表先落文件再 grep：`tar tzf | grep -q` 里 grep 命中即退出，tar 会因
+          # SIGPIPE 打出 "tar: stdout: write error"，虽然不影响结果但看着像故障。
+          tar tzf "$FPK" > /tmp/fpk-outer.txt
+          tar xzOf "$FPK" app.tgz | tar tzf - > /tmp/fpk-inner.txt
+          echo "--- 外层 ---"; cat /tmp/fpk-outer.txt
+          echo "--- app.tgz ---"; cat /tmp/fpk-inner.txt
           for entry in manifest cmd/main config/privilege config/resource \
                        wizard/install ICON.PNG ICON_256.PNG app.tgz; do
-            tar tzf "$FPK" | grep -qx "$entry" || { echo "::error::fpk 缺少 $entry"; exit 1; }
+            grep -qx "$entry" /tmp/fpk-outer.txt || { echo "::error::fpk 缺少 $entry"; exit 1; }
           done
-          echo "--- app.tgz ---"
-          tar xzOf "$FPK" app.tgz | tar tzf -
-          for entry in bin/airupnp bin/aircast server/main.py ui/index.html ui/config; do
-            tar xzOf "$FPK" app.tgz | tar tzf - | grep -qx "$entry" \
-              || { echo "::error::app.tgz 缺少 $entry"; exit 1; }
+          for entry in bin/airupnp bin/aircast server/main.py ui/index.html ui/config ui/css/app.css; do
+            grep -qx "$entry" /tmp/fpk-inner.txt || { echo "::error::app.tgz 缺少 $entry"; exit 1; }
           done
           # 生命周期脚本必须带执行位，否则安装直接失败
-          tar tzvf "$FPK" | awk '/cmd\// && $1 !~ /^-rwx/ {print "::error::" $NF " 缺执行位"; bad=1} END{exit bad}'
+          tar tzvf "$FPK" > /tmp/fpk-verbose.txt
+          if awk '/cmd\// && $1 !~ /^-rwx/ {print "::error::" $NF " 缺执行位"; bad=1} END{exit bad}' /tmp/fpk-verbose.txt; then
+            echo "cmd/* 执行位正常"
+          else
+            exit 1
+          fi
 
       - name: 模拟安装 → 启动 → 配置变更 → 停止 → 卸载
         run: |

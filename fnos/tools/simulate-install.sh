@@ -73,6 +73,16 @@ else
     echo "▶ 使用真实桥接二进制（会做一次真实发现）"
 fi
 
+# install_init 会校验 manifest 里 install_dep_apps 声明的 python312 运行时。
+# 飞牛上应用中心会先装好它；CI / 开发机上没有这个路径，会把「环境缺依赖」
+# 误报成脚本缺陷。这里在**有权限时**造一个软链，让这条前置检查真的被跑到。
+PY312="/var/apps/python312/target/bin/python3"
+if [ ! -x "$PY312" ] && [ "$(id -u)" = "0" ]; then
+    if mkdir -p "$(dirname "$PY312")" 2>/dev/null && ln -sf "$(command -v python3)" "$PY312" 2>/dev/null; then
+        echo "▶ 非飞牛环境：已临时创建 python312 软链 $PY312（供 install_init 校验）"
+    fi
+fi
+
 export TRIM_APPDEST="$SIM/target"
 export TRIM_PKGVAR="$SIM/var"
 export TRIM_PKGHOME="$SIM/home"
