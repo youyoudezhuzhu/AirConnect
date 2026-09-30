@@ -20,6 +20,7 @@ import threading
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import acconf          # noqa: E402
+import acdlna          # noqa: E402
 import aclog           # noqa: E402
 import acpath          # noqa: E402
 import acproc          # noqa: E402
@@ -87,6 +88,7 @@ def main() -> int:
     # 因此先建 AppState（supervisor=None），再把两者接起来。
     state = acweb.AppState(version=args.version, ui_dir=args.ui_dir)
     state.settings = settings
+    # 监视器由下面创建后挂上（WebServer 需要它来暴露状态）
 
     def live_settings() -> dict:
         with state.lock:
@@ -100,6 +102,10 @@ def main() -> int:
 
     rotation = aclog.RotationThread(acpath.log_paths())
     rotation.start()
+
+    dlna = acdlna.DlnaMonitor(live_settings)
+    dlna.start()
+    state.dlna = dlna
 
     server = acweb.WebServer(args.host, args.port, state, args.socket)
     try:
@@ -128,6 +134,7 @@ def main() -> int:
         log.info("正在停止桥接进程与 HTTP 服务")
         supervisor.stop_monitor()
         supervisor.stop_all()
+        dlna.stop_monitor()
         server.stop()
         rotation.stop()
         aclog.trim_inplace(acpath.SERVER_LOG)

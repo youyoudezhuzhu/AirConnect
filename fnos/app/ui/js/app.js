@@ -162,17 +162,21 @@ function renderDevices(data) {
       ? '<span class="badge badge-cast">Chromecast</span>'
       : '<span class="badge badge-upnp">UPnP</span>';
     const sub = [device.friendly_name ? '原名：' + escapeHtml(device.friendly_name) : '',
-                 device.model ? escapeHtml(device.model) : ''].filter(Boolean).join(' · ');
+                 device.model ? escapeHtml(device.model) : '',
+                 device.mac ? escapeHtml(device.mac) : ''].filter(Boolean).join(' · ');
+    const dlna = device.dlna || null;
     return `<tr data-udn="${escapeHtml(device.udn)}">
       <td class="col-on">
         <label class="switch"><input type="checkbox" class="dev-on" ${device.enabled ? 'checked' : ''}>
         <span></span></label>
       </td>
       <td><input type="text" class="dev-name" maxlength="60" value="${escapeHtml(device.name)}"></td>
+      <td class="col-dlna">${renderDlna(dlna)}</td>
       <td>${badge} ${sub ? '<span class="hint">' + sub + '</span>' : ''}</td>
-      <td class="col-mac mono">${escapeHtml(device.mac || '-')}</td>
       <td class="col-op">
         <button class="btn btn-mini dev-save" disabled>保存</button>
+        ${dlna && dlna.state && !['STOPPED', 'NO_MEDIA_PRESENT', 'UNKNOWN', 'UNREACHABLE'].includes(dlna.state)
+          ? '<button class="btn btn-mini dev-release" title="把这个 DLNA 会话释放掉（音箱回到已停止）">释放</button>' : ''}
         <button class="btn btn-mini btn-danger dev-forget" title="仅从列表移除记录；设备仍在局域网时会被再次发现">移除</button>
       </td>
     </tr>`;
@@ -192,6 +196,20 @@ function renderDevices(data) {
     name.addEventListener('input', () => { save.disabled = false; });
     on.addEventListener('change', () => saveDevice(udn, { enabled: on.checked ? 1 : 0 }, row));
     save.addEventListener('click', () => saveDevice(udn, { name: name.value }, row));
+    const release = row.querySelector('.dev-release');
+    if (release) {
+      release.addEventListener('click', async () => {
+        release.disabled = true;
+        try {
+          const data = await api('api/devices', { method: 'POST', body: { action: 'release', udn } });
+          banner(data.message || '已释放', 'ok');
+          setTimeout(loadDevices, 2000);
+        } catch (err) {
+          banner('释放失败：' + err.message, 'err', 8000);
+          release.disabled = false;
+        }
+      });
+    }
     forget.addEventListener('click', async () => {
       if (!window.confirm('确定从列表里移除这条设备记录吗？\n（设备仍在局域网时，下次扫描会重新出现）')) return;
       try {
@@ -201,6 +219,35 @@ function renderDevices(data) {
       } catch (err) { banner('移除失败：' + err.message, 'err', 8000); }
     });
   });
+}
+
+const DLNA_LABEL = {
+  PLAYING: '播放中', PAUSED_PLAYBACK: '已暂停', TRANSITIONING: '切换中',
+  STOPPED: '已停止', NO_MEDIA_PRESENT: '无媒体', UNKNOWN: '未探测',
+  UNREACHABLE: '连不上', RECORDING: '录制中',
+};
+
+function fmtRel(seconds) {
+  if (seconds === null || seconds === undefined) return '';
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+}
+
+function renderDlna(dlna) {
+  if (!dlna) return '<span class="hint">—</span>';
+  const label = DLNA_LABEL[dlna.state] || escapeHtml(dlna.state || '?');
+  const busy = ['PLAYING', 'PAUSED_PLAYBACK', 'TRANSITIONING', 'RECORDING'].includes(dlna.state);
+  if (dlna.state === 'UNREACHABLE') {
+    return `<span class="dlna dlna-err">连不上</span>`;
+  }
+  if (!busy) return `<span class="dlna dlna-idle">${label}</span>`;
+  // 播放中但位置不动 = 上游已经停了，音箱还占着会话
+  const frozen = dlna.frozen_seconds || 0;
+  const stuck = frozen >= 8;
+  return `<span class="dlna ${stuck ? 'dlna-stuck' : 'dlna-busy'}">${label}` +
+    (dlna.reltime !== null && dlna.reltime !== undefined ? ' ' + fmtRel(dlna.reltime) : '') +
+    (stuck ? `<br><small>位置已冻住 ${Math.round(frozen)} 秒</small>` : '') + '</span>';
 }
 
 async function saveDevice(udn, payload, row) {
@@ -245,6 +292,7 @@ function renderSettings(s) {
   $('f-name-suffix').value = s.name_suffix;
   $('f-codec').value = s.codec;
   $('f-main-log').value = s.main_log;
+  $('f-idle-release').value = String(s.idle_release_seconds || 0);
   $('f-http-length').value = String(s.http_length);
   $('f-stream-type').value = s.stream_type;
   $('f-max-players').value = s.max_players;
@@ -293,6 +341,7 @@ function collectSettings() {
     codec: $('f-codec').value,
     binding: $('f-binding').value || '?',
     main_log: $('f-main-log').value,
+    idle_release_seconds: parseInt($('f-idle-release').value, 10),
     http_length: parseInt($('f-http-length').value, 10),
     stream_type: $('f-stream-type').value,
     max_players: parseInt($('f-max-players').value, 10),

@@ -170,6 +170,15 @@ iPhone / iPad / Mac
 10. **设备列表要先把 XML 合并回设置再写回**，否则「GET 设置 → 期间发现新设备 →
     POST 保存」会把刚发现的设备条目抹掉（`acconf.sync_devices` 里做过一次回归修复）。
 
+12. **iOS 暂停时不给任何 RTSP 命令**，所以"音箱还占着 DLNA 会话"只能靠**主动轮询渲染器
+    状态**发现（`acdlna.py`）。释放用 `AVTStop`，**不要**去清 `CurrentURI` ——
+    S12 实测在外部 `AVTStop` 后，单独一个 `Play` 就能在原位置续上（无重新拉流），
+    而清空 URI 反而会把这个恢复路径断掉。
+13. **做硬件实验一定要按 UDN 锁定目标设备。** 本机局域网里同时有 S12 和一台
+    `Redmi Pad SE`（Windows Media Receiver），按 SSDP 返回顺序取第一台会**测错设备** ——
+    我因此得出过一个错误结论（"AVTStop 后裸 Play 会重新拉流"其实是那台平板的语义，
+    S12 是"保连接原地续上"）。`acdlna` 的匹配是按 UDN 的，没问题；手工脚本要注意。
+
 11. **`<latency>` 的 rtp 段写 0 会照用 iOS 宣告的延迟。** 代码里就一行
     （`raop_streamer.c:648`：`if (!ctx->latency) ctx->latency = rtp_now - rtp_now_latency;`），
     真机量到的宣告值是 **1750 ms**，直接变成开播/恢复的固定延迟。

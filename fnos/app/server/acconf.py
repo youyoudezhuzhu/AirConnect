@@ -86,6 +86,13 @@ DEFAULTS: Dict[str, Any] = {
     "cast_log": "warn",
     "util_log": "warn",
     "raop_log": "warn",
+    # DLNA 会话空闲多久后自动释放（秒）。0 = 关闭。
+    # iOS 暂停/切走时**不发任何 RTSP 命令**，音箱会停在 PLAYING 且位置冻结，
+    # 会话一直挂着（米家 App 里一直显示"播放中"）。开启后由管理服务轮询
+    # 渲染器状态、发现冻结超时就发一个 AVTStop 把会话放掉。
+    # 默认关闭：AirConnect 只在收到 RAOP PLAY 事件时才发 AVTPlay，
+    # 若 iOS 恢复时不重发 RECORD，被释放的会话需要在 iPhone 上重新选一次设备。
+    "idle_release_seconds": 0,
     "binding": "?",
     "upnp_port": 0,
     "port_base": acpath.DEFAULT_PORT_BASE,
@@ -105,6 +112,7 @@ _INT_FIELDS = {
     "max_players": (1, 64),
     "log_limit": (-1, 4096),
     "upnp_port": (0, 65535),
+    "idle_release_seconds": (0, 3600),
     "port_base": (1024, 65000),
     "port_range": (1, 512),
 }

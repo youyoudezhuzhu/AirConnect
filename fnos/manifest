@@ -1,5 +1,5 @@
 appname                    = airconnect
-version                    = 1.12.4-2
+version                    = 1.12.4-3
 display_name               = AirConnect
 desc                       = AirConnect：把局域网里的 DLNA/UPnP 音响、Sonos、Heos 与 Chromecast 变成 AirPlay 音箱。应用原生运行在飞牛 NAS 上（不使用 Docker），内置 airupnp（UPnP/Sonos 桥接）与 aircast（Chromecast 桥接）两个上游原生二进制，并把被发现的播放设备逐个注册成 AirPlay 设备，iPhone / iPad / Mac 的 AirPlay 列表里直接多出这些音箱。内置管理界面：启停与模式切换、延迟/编码器/绑定网卡等参数调整、按设备启用禁用与改名、实时日志。
 platform                   = x86
@@ -16,4 +16,4 @@ service_port               = 18888
 checkport                  = true
 ctl_stop                   = true
 disable_authorization_path = true
-changelog                  = 1.12.4-2 针对真机反馈的「暂停/恢复/拖进度条延迟约 5 秒」做实测定位与修复。真机（小爱音箱 S12 + iPhone AirPlay 2）用 debug 日志 + 独立 UPnP 探测器对齐时间线后测出：延迟由两段构成 —— ① AirConnect 的 RTP 缓冲，因为 <latency> 的 rtp 段为 0 时它会照用 iOS 在同步包里宣告的延迟，实测该值为 1750ms（77175 采样 @44.1kHz）；② 音箱自身启动缓冲约 1~1.7 秒。合计约 3.5 秒，与体感 5 秒吻合。AirConnect 本身的反应并不慢：日志里收到事件到发出 UPnP 动作仅 75~280ms。因此把默认延迟从 0:0 改为上游文档推荐的抗抖动下限 500:0，暂停/恢复/seek 各少约 1.25 秒；安装向导与「应用设置」新增「播放延迟」选项（低延迟 500:0 / 跟随 AirPlay 0:0 / Sonos·Heos 1000:2000），设置页延迟下拉新增「低延迟（推荐，500:0）」预设。另附实测结论：iOS 暂停时**不发送任何 RTSP 命令**（40 秒会话里只有开播的一次 FLUSH 与结束时的 TEARDOWN），因此 AirConnect 无法即时响应暂停；控制实验显示 AVTStop 能让音箱在 0.1 秒内静音，但该 URI 随即作废、恢复需重新宣告并重新缓冲，故未引入「断流即 Stop」的改动（会把暂停慢换成恢复慢）。详见 fnos/docs/LATENCY_S12.md。
+changelog                  = 1.12.4-3 新增 DLNA 会话状态显示与释放。起因：iOS 暂停（以及某些「切回本机播放」的情况）**不发任何 RTSP 命令**，AirConnect 收不到通知，音箱就停在 PLAYING、位置冻结、会话一直挂着（米家/小爱同学 App 里持续显示「播放中」，音箱也不进待机）。本版新增一个独立轮询 DLNA 渲染器 AVTransport 的监视器：①「播放设备」页新增「DLNA 状态」列，直接显示音箱的真实传输状态与位置，位置冻结超过 8 秒会标黄提示「位置已冻住 N 秒」；② 每台设备新增「释放」按钮，一键把挂着的会话放掉；③ 新增设置项「空闲释放 DLNA 会话」（0/15/30/60/120 秒，**默认关闭**），开启后位置冻结超时即自动释放。刻意**不清空 CurrentURI**：S12 实测在外部 AVTStop 之后，单独一个 Play 就能在原位置续上（无重新拉流），且 AirConnect 收到新的 RECORD 时会走「重新宣告」分支，因此释放后可恢复。同版修掉一个日志 bug：cmd/main 以 root 创建日志文件导致应用用户写不进自己的日志、轮转静默失效（真机上 server.log 从安装到首次升级一直是 root:root 0 字节）；现在先建文件再 chown，且轮转遇到不可写会打警告。真机实测确认轮转有效：7,360,000 字节 → 1,048,570 字节且 inode 不变（原地重写）。

@@ -45,8 +45,10 @@ class AppState:
     """HTTP 层与业务层之间的共享状态。"""
 
     def __init__(self, supervisor: Any = None, version: str = "0.0.0",
-                 ui_dir: str = "") -> None:
+                 ui_dir: str = "", dlna: Any = None) -> None:
         self.supervisor = supervisor
+        # DLNA 渲染器状态监视器（可选；不注入时相关字段留空）
+        self.dlna = dlna
         self.version = version
         self.ui_dir = ui_dir
         self.started_at = time.time()
@@ -320,10 +322,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/devices" and method in ("GET", "HEAD"):
             settings = state.reload_settings()
+            devices = []
+            for device in settings.get("devices", []):
+                item = dict(device)
+                if state.dlna is not None:
+                    item["dlna"] = state.dlna.state_for(device["udn"])
+                devices.append(item)
             self._send_json({"ok": True,
-                             "devices": settings.get("devices", []),
+                             "devices": devices,
                              "mode": settings.get("mode", "upnp"),
-                             "name_suffix": settings.get("name_suffix", "+")})
+                             "name_suffix": settings.get("name_suffix", "+"),
+                             "idle_release_seconds": settings.get("idle_release_seconds", 0)})
             return
 
         if path == "/api/interfaces" and method in ("GET", "HEAD"):
@@ -392,8 +401,19 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._error(HTTPStatus.BAD_REQUEST, str(exc))
                 return
+            action = payload.get("action")
             try:
-                if payload.get("action") == "forget":
+                if action == "release":
+                    if state.dlna is None:
+                        self._error(HTTPStatus.SERVICE_UNAVAILABLE, "DLNA 监视器未启用")
+                        return
+                    result = state.dlna.release(str(payload.get("udn", "")))
+                    if not result.get("ok"):
+                        self._error(HTTPStatus.BAD_REQUEST, result.get("error", "释放失败"))
+                        return
+                    self._send_json({"ok": True, "message": result.get("message", "已释放")})
+                    return
+                if action == "forget":
                     settings = state.forget_device(str(payload.get("udn", "")))
                 else:
                     settings = state.apply_device(payload)
@@ -453,6 +473,7 @@ class Handler(BaseHTTPRequestHandler):
                 "home": acpath.PKG_HOME,
                 "socket": acpath.GATEWAY_SOCKET,
             },
+            "dlna": state.dlna.snapshot() if state.dlna is not None else None,
             "log_sizes": {name: _safe_size(path) for name, path in (
                 ("server", acpath.SERVER_LOG),
                 ("airupnp", os.path.join(acpath.PKG_VAR, "airupnp.log")),

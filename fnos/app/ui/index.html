@@ -38,7 +38,9 @@
         <h2>播放设备</h2>
         <p class="hint" id="devices-hint">
           这里是 AirConnect 在局域网里发现的音响。<b>关掉开关</b>就不会再出现在
-          iPhone 的 AirPlay 列表里；<b>改名字</b>只影响 AirPlay 里显示的名称。
+        iPhone 的 AirPlay 列表里；<b>改名字</b>只影响 AirPlay 里显示的名称。
+        「DLNA 状态」是直接问音箱得到的实时传输状态 —— 如果它显示<b>播放中但位置不动</b>，
+        说明 AirPlay 那头已经停了、音箱还占着会话，点「释放」即可。
         </p>
       </div>
       <div class="row-actions">
@@ -52,8 +54,8 @@
           <tr>
             <th class="col-on">启用</th>
             <th>AirPlay 名称</th>
-            <th>原始设备名 / 型号</th>
-            <th class="col-mac">MAC</th>
+            <th class="col-dlna">DLNA 状态</th>
+            <th>设备信息</th>
             <th class="col-op">操作</th>
           </tr>
         </thead>
@@ -127,6 +129,20 @@
         <label>绑定网卡</label>
         <select id="f-binding"></select>
         <p class="hint">NAS 有多张网卡时，选与音响同一网段的那张。默认自动。</p>
+      </div>
+
+      <div class="field">
+        <label>空闲释放 DLNA 会话</label>
+        <select id="f-idle-release">
+          <option value="0">关闭（推荐先用「释放」按钮手动放）</option>
+          <option value="15">空闲 15 秒后自动释放</option>
+          <option value="30">空闲 30 秒后自动释放</option>
+          <option value="60">空闲 60 秒后自动释放</option>
+          <option value="120">空闲 120 秒后自动释放</option>
+        </select>
+        <p class="hint">iOS 暂停或切回本机播放时不给 AirConnect 任何通知，音箱会一直占着会话
+          （米家 App 显示"播放中"）。开启后，位置冻结超过设定秒数就自动把会话放掉。
+          若恢复播放时没声音，在 iPhone 上重选一次设备即可，或把这里关掉。</p>
       </div>
 
       <div class="field">
