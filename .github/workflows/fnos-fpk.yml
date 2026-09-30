@@ -137,30 +137,79 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           FPK=$(ls fnos/dist/*.fpk)
           TAG="${GITHUB_REF_NAME}"
-          # 同名 tag 的 release 可能已存在：先查再建，避免 already_exists
-          if ! curl -sS -f -H "Authorization: Bearer $GH_TOKEN" \
-               "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null; then
-            curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
-              -d "{\"tag_name\":\"${TAG}\",\"name\":\"AirConnect for fnOS ${TAG}\",\"draft\":false,\"prerelease\":false}"
+          REPO="${GITHUB_REPOSITORY}"
+          NAME=$(basename "$FPK")
+          API="https://api.github.com/repos/${REPO}"
+
+          # 定位（必要时创建）Release，拿到**数字 ID**。
+          # ⚠️ 上传资产必须用 /releases/<id>/assets；用 /releases/tags/<tag>/assets
+          # 会被 GitHub 拒绝："Multipart form data required"，而且那个错误
+          # 只要不检查响应就会被当成成功（本仓库真实踩过）。
+          RID=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" "${API}/releases/tags/${TAG}" \
+                | python3 -c 'import json,sys
+          try: print(json.load(sys.stdin).get("id","") or "")
+          except Exception: print("")')
+          if [ -z "$RID" ]; then
+            BODY=$(jq -n --arg tag "$TAG" --arg name "$NAME" \
+                        --arg size "$(stat -c %s "$FPK")" \
+                        --arg sha "$(sha256sum "$FPK" | cut -d' ' -f1)" \
+              '{tag_name:$tag, name:("AirConnect for fnOS " + $tag), draft:false, prerelease:false,
+                body:($name + "\n\n- 体积: " + $size + " 字节\n- SHA-256: `" + $sha + "`")}')
+            RID=$(curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" \
+                  "${API}/releases" -d "$BODY" \
+                  | python3 -c 'import json,sys
+          d=json.load(sys.stdin)
+          print(d.get("id","") or d.get("message",""))')
           fi
-          # 资产同名会上传失败：先删旧的
-          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            | python3 -c "
+          case "$RID" in
+            ''|*[!0-9]*) echo "::error::无法创建/定位 Release：$RID"; exit 1 ;;
+          esac
+          echo "Release ID = $RID"
+
+          upload() {
+            curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$FPK" \
+              "https://uploads.github.com/repos/${REPO}/releases/${RID}/assets?name=$1"
+          }
+
+          # ★ 顺序很重要：**先上传、成功了再清理同名旧资产**。
+          # 反过来（先删后传）一旦上传失败，资产就彻底没了 —— 本仓库 1.12.4-1
+          # 和 1.12.4-2 两个 Release 的资产就是这样被抹掉的。
+          RESP=$(upload "$NAME")
+          if ! echo "$RESP" | grep -q '"browser_download_url"'; then
+            echo "首次上传未成功（多半是同名资产已存在），先清理再重试：$RESP"
+            curl -sS -H "Authorization: Bearer $GH_TOKEN" "${API}/releases/${RID}/assets" \
+              | python3 -c '
           import json, sys
-          data = json.load(sys.stdin)
-          for asset in data.get('assets', []):
-              print(asset['id'], asset['name'])
-          " | while read -r id name; do
-            echo "删除旧资产 $name"
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${id}" >/dev/null
-          done
-          curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @"$FPK" \
-            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}/assets?name=$(basename "$FPK")"
+          name = sys.argv[1]
+          for a in json.load(sys.stdin):
+              if a["name"] == name:
+                  print(a["id"])
+          ' "$NAME" | while read -r AID; do
+                [ -n "$AID" ] && curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+                  "${API}/releases/assets/${AID}" >/dev/null && echo "已删除旧资产 id=$AID"
+              done
+            RESP=$(upload "$NAME")
+          fi
+
+          if echo "$RESP" | grep -q '"browser_download_url"'; then
+            echo "上传成功：$(echo "$RESP" | python3 -c 'import json,sys;print(json.load(sys.stdin)["browser_download_url"])')"
+          else
+            echo "::error::Release 资产上传失败：$RESP"
+            exit 1
+          fi
+
+          # 收尾自检：直链必须真的能下到东西（CI 里"上传成功"但直链 404 踩过）
+          URL="https://github.com/${REPO}/releases/download/${TAG}/${NAME}"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -L "$URL" || true)
+          if [ "$CODE" = "200" ]; then
+            echo "直链校验通过：$URL"
+          else
+            echo "::error::直链校验失败（HTTP $CODE）：$URL"
+            exit 1
+          fi
