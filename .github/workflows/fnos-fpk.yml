@@ -1,0 +1,160 @@
+name: fnOS FPK
+
+# 只在打包工程发生变化时跑，避免上游 C 代码的日常提交触发整个构建。
+on:
+  push:
+    branches: [ fnos, main, master ]
+    paths:
+      - 'fnos/**'
+      - '.github/workflows/fnos-fpk.yml'
+    tags: [ 'v*' ]
+  pull_request:
+    paths:
+      - 'fnos/**'
+      - '.github/workflows/fnos-fpk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------- 快速检查
+  tests:
+    name: 单元测试 + 端到端 API 测试
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 语法检查
+        run: python3 -m compileall -q fnos/app/server
+
+      - name: 单元测试（配置校验 / XML / 日志轮转）
+        run: python3 -m unittest discover -s fnos/tests -v
+
+      - name: 端到端 API 测试（真起服务 + 假桥接进程，19 个用例）
+        run: python3 fnos/tests/test_service.py
+
+      - name: 日志轮转 shell 断言（从 cmd/main 提取真实函数）
+        run: ./fnos/tools/test-logrotate.sh
+
+      - name: Shell 语法检查
+        run: |
+          for f in fnos/cmd/* fnos/scripts/*.sh fnos/tools/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      - name: JSON 元数据可解析 + manifest 关键字段
+        run: |
+          python3 - <<'PY'
+          import json, re, pathlib
+          for name in ("config/privilege", "config/resource", "app/ui/config",
+                       "wizard/install", "wizard/config", "wizard/uninstall"):
+              json.load(open(f"fnos/{name}", encoding="utf-8"))
+              print("OK", name)
+          text = pathlib.Path("fnos/manifest").read_text(encoding="utf-8")
+          for field in ("appname", "version", "platform", "source", "service_port",
+                        "desktop_uidir", "desktop_applaunchname"):
+              assert re.search(rf"^{field}\s*=", text, re.M), f"manifest 缺字段 {field}"
+          # 官方不存在的字段名一律不能用
+          for bad in ("arch", "description", "developer", "category", "port"):
+              assert not re.search(rf"^{bad}\s*=", text, re.M), f"manifest 含非法字段 {bad}"
+          ver = re.search(r"^version\s*=\s*(\S+)", text, re.M).group(1)
+          assert re.fullmatch(r"\d+(\.\d+){2}(-\d+)?", ver), f"version 不合法：{ver}"
+          print("manifest OK", ver)
+          PY
+
+      - name: 隐私清理（应用包内不得出现内网地址 / 本机用户名）
+        run: |
+          if grep -rnE '192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+' fnos/ \
+               --include='*.py' --include='*.sh' --include='*.json' --include='*.js' \
+               --include='*.html' --include='*.css' --include='manifest' \
+               | grep -v '0\.0\.0\.0'; then
+            echo "::error::打包工程里出现了内网地址"; exit 1
+          fi
+          for name in jzh youyoudezhuzhu; do :; done
+          echo "无内网地址残留"
+
+  # ---------------------------------------------------------------- 编译 + 打包
+  build:
+    name: 编译 airupnp / aircast 并打包 fpk
+    needs: tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential
+
+      - name: 从上游源码编译并打包（build.sh 会自己初始化 git 子模块）
+        run: ./fnos/scripts/build.sh
+
+      - name: 记录产物校验值
+        run: |
+          FPK=$(ls fnos/dist/*.fpk)
+          sha256sum "$FPK" | tee fnos/dist/SHA256SUMS.txt
+
+      - name: 校验 fpk 双层结构
+        run: |
+          FPK=$(ls fnos/dist/*.fpk)
+          echo "--- 外层 ---"; tar tzf "$FPK"
+          for entry in manifest cmd/main config/privilege config/resource \
+                       wizard/install ICON.PNG ICON_256.PNG app.tgz; do
+            tar tzf "$FPK" | grep -qx "$entry" || { echo "::error::fpk 缺少 $entry"; exit 1; }
+          done
+          echo "--- app.tgz ---"
+          tar xzOf "$FPK" app.tgz | tar tzf -
+          for entry in bin/airupnp bin/aircast server/main.py ui/index.html ui/config; do
+            tar xzOf "$FPK" app.tgz | tar tzf - | grep -qx "$entry" \
+              || { echo "::error::app.tgz 缺少 $entry"; exit 1; }
+          done
+          # 生命周期脚本必须带执行位，否则安装直接失败
+          tar tzvf "$FPK" | awk '/cmd\// && $1 !~ /^-rwx/ {print "::error::" $NF " 缺执行位"; bad=1} END{exit bad}'
+
+      - name: 模拟安装 → 启动 → 配置变更 → 停止 → 卸载
+        run: |
+          sudo -E env "AIRCONNECT_SIM_ROOT=/tmp/fpk-sim" "AIRCONNECT_SIM_PORT=18999" \
+            ./fnos/tools/simulate-install.sh "$(ls fnos/dist/*.fpk)"
+
+      - name: 上传 fpk
+        uses: actions/upload-artifact@v4
+        with:
+          name: airconnect-fpk
+          path: |
+            fnos/dist/*.fpk
+            fnos/dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: 打 tag 时发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FPK=$(ls fnos/dist/*.fpk)
+          TAG="${GITHUB_REF_NAME}"
+          # 同名 tag 的 release 可能已存在：先查再建，避免 already_exists
+          if ! curl -sS -f -H "Authorization: Bearer $GH_TOKEN" \
+               "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null; then
+            curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"AirConnect for fnOS ${TAG}\",\"draft\":false,\"prerelease\":false}"
+          fi
+          # 资产同名会上传失败：先删旧的
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for asset in data.get('assets', []):
+              print(asset['id'], asset['name'])
+          " | while read -r id name; do
+            echo "删除旧资产 $name"
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${id}" >/dev/null
+          done
+          curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$FPK" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}/assets?name=$(basename "$FPK")"

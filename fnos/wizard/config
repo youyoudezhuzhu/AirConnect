@@ -1,0 +1,50 @@
+[
+    {
+        "stepTitle": "桥接模式",
+        "items": [
+            {
+                "type": "radio",
+                "field": "wizard_mode",
+                "label": "要让哪些设备变成 AirPlay 音箱",
+                "initValue": "upnp",
+                "options": [
+                    { "label": "DLNA / UPnP 音响（含 Sonos、Heos，推荐）", "value": "upnp" },
+                    { "label": "Chromecast / Google Cast 设备", "value": "cast" },
+                    { "label": "两种都启用（同时运行 airupnp 与 aircast）", "value": "both" }
+                ],
+                "helpText": "切换模式会重启桥接程序，正在播放的 AirPlay 会话会中断。"
+            }
+        ]
+    },
+    {
+        "stepTitle": "AirPlay 名称",
+        "items": [
+            {
+                "type": "text",
+                "field": "wizard_name_suffix",
+                "label": "AirPlay 名称后缀",
+                "initValue": "+",
+                "helpText": "拼在音响原名之后。留空表示与原名完全一致。",
+                "rules": [
+                    { "pattern": "^[^%]{0,20}$", "message": "后缀最多 20 个字符，且不能包含百分号 %" }
+                ]
+            }
+        ]
+    },
+    {
+        "stepTitle": "日志级别",
+        "items": [
+            {
+                "type": "radio",
+                "field": "wizard_log_level",
+                "label": "日志详细程度",
+                "initValue": "info",
+                "options": [
+                    { "label": "常规（推荐）", "value": "info" },
+                    { "label": "详细（排查问题用）", "value": "debug" },
+                    { "label": "仅警告与错误", "value": "warn" }
+                ]
+            }
+        ]
+    }
+]

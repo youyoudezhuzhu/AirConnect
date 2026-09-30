@@ -1,0 +1,32 @@
+#!/bin/bash
+# 卸载前：停服，并按记录到的 PID 精确清理遗留进程。
+#
+# 刻意不使用 `pkill -f <二进制路径>`：该写法会匹配任何命令行中含有该路径的进程
+# （例如运维人员的 shell 或日志跟踪命令），存在真实存在的误杀风险。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/airconnect}"
+APP="${TRIM_APPDEST:-/var/apps/airconnect/target}"
+
+"$CMD_DIR/main" stop >/dev/null 2>&1 || true
+
+for name in airupnp aircast server; do
+    pidfile="$VAR/$name.pid"
+    [ -r "$pidfile" ] || continue
+    pid="$(head -n 1 "$pidfile" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null
+        sleep 1
+        kill -KILL "$pid" 2>/dev/null
+    fi
+    rm -f "$pidfile"
+done
+rm -f "$APP/airconnect.sock" 2>/dev/null || true
+exit 0

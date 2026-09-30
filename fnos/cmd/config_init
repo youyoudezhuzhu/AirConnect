@@ -1,0 +1,13 @@
+#!/bin/bash
+# 应用设置变更前：停服，确保新配置在干净状态下生效。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+"$CMD_DIR/main" stop >/dev/null 2>&1 || true
+exit 0

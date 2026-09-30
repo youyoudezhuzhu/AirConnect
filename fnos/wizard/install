@@ -1,0 +1,54 @@
+[
+    {
+        "stepTitle": "桥接模式",
+        "items": [
+            {
+                "type": "radio",
+                "field": "wizard_mode",
+                "label": "要让哪些设备变成 AirPlay 音箱",
+                "initValue": "upnp",
+                "options": [
+                    { "label": "DLNA / UPnP 音响（含 Sonos、Heos，推荐）", "value": "upnp" },
+                    { "label": "Chromecast / Google Cast 设备", "value": "cast" },
+                    { "label": "两种都启用（同时运行 airupnp 与 aircast）", "value": "both" }
+                ],
+                "helpText": "AirConnect 通过两个程序工作：airupnp 负责 DLNA/UPnP/Sonos/Heos，aircast 负责 Chromecast。两种都启用会常驻两个进程，但只桥接你实际拥有的设备。安装后可以随时在应用界面里切换。"
+            }
+        ]
+    },
+    {
+        "stepTitle": "AirPlay 名称",
+        "items": [
+            {
+                "type": "text",
+                "field": "wizard_name_suffix",
+                "label": "AirPlay 名称后缀",
+                "initValue": "+",
+                "helpText": "拼在音响原名之后，用来区分「音箱本身的名字」和「AirPlay 里的名字」。例如音响叫「客厅音箱」、后缀填「+」，iPhone 的 AirPlay 列表里显示「客厅音箱+」。留空表示与原名完全一致。也可在应用界面里按设备单独改名。",
+                "rules": [
+                    { "pattern": "^[^%]{0,20}$", "message": "后缀最多 20 个字符，且不能包含百分号 %" }
+                ]
+            }
+        ]
+    },
+    {
+        "stepTitle": "日志级别",
+        "items": [
+            {
+                "type": "radio",
+                "field": "wizard_log_level",
+                "label": "日志详细程度",
+                "initValue": "info",
+                "options": [
+                    { "label": "常规（推荐）", "value": "info" },
+                    { "label": "详细（排查问题用）", "value": "debug" },
+                    { "label": "仅警告与错误", "value": "warn" }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "安装完成后：打开应用 → 确认桥接模式 → 「刷新设备」看到你的音响 → 在 iPhone / iPad / Mac 的控制中心里选择对应的 AirPlay 名称即可播放。Sonos / Heos 用户请在设置里把延迟切换为「Sonos / Heos 预设 1000:2000」。"
+            }
+        ]
+    }
+]

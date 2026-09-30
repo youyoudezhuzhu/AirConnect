@@ -1,0 +1,14 @@
+#!/bin/bash
+# 升级前：幂等停服。否则旧进程占着端口与 PID 文件，新版本 bind 失败，
+# 表现成「升级了但功能没变」这种隐形故障。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+"$CMD_DIR/main" stop >/dev/null 2>&1 || true
+exit 0

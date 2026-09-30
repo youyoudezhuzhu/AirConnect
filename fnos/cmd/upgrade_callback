@@ -1,0 +1,54 @@
+#!/bin/bash
+# 升级后：迁移配置（只增不删）、修权限、重新拉起服务。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+APP="${TRIM_APPDEST:-/var/apps/airconnect/target}"
+ETC="${TRIM_PKGETC:-/vol1/@appconf/airconnect}"
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/airconnect}"
+HOME_DIR="${TRIM_PKGHOME:-/vol1/@apphome/airconnect}"
+RUN_USER="${TRIM_USERNAME:-airconnect}"
+PYTHON="/var/apps/python312/target/bin/python3"
+[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+LOGF="${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+
+chmod +x "$APP"/bin/* 2>/dev/null
+chmod +x "$CMD_DIR"/* 2>/dev/null
+chmod +x "$APP"/server/*.py 2>/dev/null
+chmod -R a+rX "$APP" 2>/dev/null
+
+if ! "$PYTHON" "$APP/server/settings_cli.py" migrate; then
+    echo "配置迁移失败，已保留原配置" > "$LOGF"
+fi
+
+# 清理旧运行期的 PID / 轮转临时文件，避免跨版本残留
+rm -f "$VAR"/*.pid "$VAR"/*.rotate.tmp "$VAR"/airconnect.sock 2>/dev/null
+
+if id -u "$RUN_USER" >/dev/null 2>&1; then
+    chown -R "$RUN_USER" "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+    # 升级会重新解包应用目录，套接字的写权限可能被覆盖掉，这里补回来
+    chgrp "$RUN_USER" "$APP" 2>/dev/null || true
+    chmod 775 "$APP" 2>/dev/null || true
+    rm -f "$APP/airconnect.sock" 2>/dev/null || true
+fi
+
+# 关键：升级后必须重新拉起服务，否则用户看到的是「装好了但打不开」
+if ! "$CMD_DIR/main" start >/dev/null 2>&1; then
+    echo "升级后服务启动失败，请查看 $VAR/server.log 与 $VAR/main.log" > "$LOGF"
+    exit 1
+fi
+exit 0

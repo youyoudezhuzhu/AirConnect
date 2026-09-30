@@ -1,0 +1,14 @@
+{
+    ".url": {
+        "airconnect.main": {
+            "title": "AirConnect",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "",
+            "gatewayPrefix": "/app/airconnect",
+            "gatewaySocket": "airconnect.sock",
+            "url": "/app/airconnect",
+            "allUsers": true
+        }
+    }
+}

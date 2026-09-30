@@ -1,0 +1,14 @@
+#!/bin/bash
+# 卸载后：按用户选择处理配置与日志；绝不触碰应用目录之外的数据。
+set -u
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/airconnect}"
+ETC="${TRIM_PKGETC:-/vol1/@appconf/airconnect}"
+HOME_DIR="${TRIM_PKGHOME:-/vol1/@apphome/airconnect}"
+
+# 运行期文件总是可以安全清理
+rm -f "$VAR"/*.pid "$VAR"/*.rotate.tmp 2>/dev/null
+
+if [ "${wizard_data_action:-keep}" = "delete" ]; then
+    rm -rf "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+fi
+exit 0

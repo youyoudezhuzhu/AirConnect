@@ -1,0 +1,286 @@
+#!/bin/bash
+# AirConnect —— 飞牛应用生命周期脚本
+#
+#   main start | stop | status
+#
+# 进程模型：
+#
+#   root ──（本脚本，由飞牛调用）
+#          └─ setpriv/runuser 降权 ── airconnect 用户
+#                                       └─ main.py（管理服务：HTTP + REST + 网关套接字）
+#                                            ├─ airupnp  （DLNA/UPnP/Sonos/Heos 桥接）
+#                                            └─ aircast  （Chromecast 桥接）
+#
+# airupnp / aircast 只做 RTSP/HTTP/UPnP，不需要特权端口，因此与父进程同用户
+# 即可（与 Air2DLNA 里 shairport-sync 的处理一致：处理网络数据的进程一律降权）。
+#
+# 规则：一律用 $TRIM_* 引用路径，绝不硬编码 /var/apps/airconnect。
+
+set -u
+
+APP="${TRIM_APPDEST:-/var/apps/airconnect/target}"
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/airconnect}"
+ETC="${TRIM_PKGETC:-/vol1/@appconf/airconnect}"
+HOME_DIR="${TRIM_PKGHOME:-/vol1/@apphome/airconnect}"
+PORT="${TRIM_SERVICE_PORT:-18888}"
+RUN_USER="${TRIM_USERNAME:-airconnect}"
+APPVER="${TRIM_APPVER:-0.0.0}"
+
+MAIN_LOG="$VAR/main.log"
+SERVER_LOG="$VAR/server.log"
+SERVER_PID="$VAR/server.pid"
+BIN_DIR="$APP/bin"
+SERVER_DIR="$APP/server"
+UI_DIR="$APP/ui"
+
+# 单个日志文件上限与超限后保留的尾部长度（与 aclog.py 的常量保持一致）
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"    # 5 MiB
+LOG_KEEP_BYTES="${LOG_KEEP_BYTES:-1048576}"  # 1 MiB
+
+# 飞牛统一网关：桌面/应用中心入口通过该 Unix 套接字 + 路径前缀访问应用
+GATEWAY_SOCKET="${GATEWAY_SOCKET:-$APP/airconnect.sock}"
+GATEWAY_PREFIX="${GATEWAY_PREFIX:-/app/airconnect}"
+export GATEWAY_SOCKET GATEWAY_PREFIX
+
+# python312 是 manifest 中声明的依赖运行时
+PYTHON="/var/apps/python312/target/bin/python3"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3 || true)"
+fi
+
+mkdir -p "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $*" >> "$MAIN_LOG"
+}
+
+fail() {
+    log_msg "ERROR: $*"
+    echo "$*" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+}
+
+# 日志轮转：超过上限时只保留尾部。
+# **必须原地重写（不能 mv）**：写入方（main.py 的 stdout/stderr、子进程的
+# O_APPEND 描述符）持有同一个 inode，mv 之后它们会继续写进已改名的旧文件，
+# 表面上有轮转、实际上新文件永远收不到内容。
+# 默认值写在函数体内（测试脚本会用 sed 把这个函数单独提取出来跑）。
+trim_log() {
+    local LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
+    local LOG_KEEP_BYTES="${LOG_KEEP_BYTES:-1048576}"
+    local file="$1" size tmp
+    [ -f "$file" ] || return 0
+    size="$(stat -c %s "$file" 2>/dev/null || echo 0)"
+    case "$size" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$size" -le "$LOG_MAX_BYTES" ] && return 0
+    tmp="$file.rotate.tmp"
+    # 保留尾部；并用 awk 'NR>1' 丢掉被截断的首行（与 aclog.py 的 trim_inplace 一致）。
+    # 单行比保留长度还长时必须退化为「保留原始尾部」，否则 awk 会输出空内容、
+    # 轮转把整个日志清空。
+    if tail -c "$LOG_KEEP_BYTES" "$file" 2>/dev/null > "$tmp" && [ -s "$tmp" ]; then
+        awk 'NR>1' "$tmp" > "$tmp.keep" 2>/dev/null
+        [ -s "$tmp.keep" ] || cp -f "$tmp" "$tmp.keep" 2>/dev/null
+        if [ -s "$tmp.keep" ]; then
+            if cat "$tmp.keep" > "$file" 2>/dev/null; then
+                log_msg "[logrotate] 日志超过 $((LOG_MAX_BYTES / 1048576))MB（原 $size 字节），已保留尾部 $((LOG_KEEP_BYTES / 1024))KB: $(basename "$file")"
+            fi
+        fi
+    fi
+    rm -f "$tmp" "$tmp.keep" 2>/dev/null
+    return 0
+}
+
+check_pid() {
+    local pid="$1"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+read_pid() {
+    local file="$1"
+    [ -r "$file" ] || return 1
+    head -n 1 "$file" 2>/dev/null | tr -d '[:space:]'
+}
+
+# 以应用用户运行命令（降权）。优先 setpriv，其次 runuser，最后 su。
+run_as_app_user() {
+    if [ -z "$RUN_USER" ] || [ "$RUN_USER" = "root" ] || ! id -u "$RUN_USER" >/dev/null 2>&1; then
+        exec "$@"
+    fi
+    local uid gid
+    uid="$(id -u "$RUN_USER")"
+    gid="$(id -g "$RUN_USER")"
+    if command -v setpriv >/dev/null 2>&1; then
+        exec setpriv --reuid="$uid" --regid="$gid" --clear-groups -- "$@"
+    fi
+    if command -v runuser >/dev/null 2>&1; then
+        exec runuser -u "$RUN_USER" -- "$@"
+    fi
+    log_msg "WARN: 未找到 setpriv/runuser，将以当前用户启动：$*"
+    exec "$@"
+}
+
+# 按 PID 文件精确清理遗留的 airupnp / aircast。
+# **刻意不使用 pkill -f <二进制路径>**：那会匹配任何命令行里含该路径的进程
+# （包括运维人员的 shell 与日志跟踪命令），属于真实存在的误杀风险。
+kill_stale_bridge() {
+    local name pidfile pid
+    for name in airupnp aircast; do
+        pidfile="$VAR/$name.pid"
+        pid="$(read_pid "$pidfile" || true)"
+        if check_pid "$pid"; then
+            log_msg "清理遗留的 $name (pid=$pid)"
+            kill -TERM "$pid" 2>/dev/null
+            local n=0
+            while check_pid "$pid" && [ "$n" -lt 8 ]; do sleep 1; n=$((n + 1)); done
+            check_pid "$pid" && kill -KILL "$pid" 2>/dev/null
+        fi
+        rm -f "$pidfile" 2>/dev/null
+    done
+}
+
+# ---------------------------------------------------------------- 前置检查
+preflight() {
+    [ -x "$PYTHON" ] || fail "缺少 Python 运行时（python312）：$PYTHON"
+    [ -f "$SERVER_DIR/main.py" ] || fail "缺少管理服务：$SERVER_DIR/main.py"
+    [ -f "$UI_DIR/index.html" ] || fail "缺少 Web UI：$UI_DIR/index.html"
+    # 安装包里的二进制可能丢掉执行位（trim-cli / 某些解包工具会改成 644），
+    # 丢执行位的表现是「进程 PID xxx 意外退出」，且日志为空 —— 这里兜底修复。
+    if [ -d "$BIN_DIR" ]; then
+        chmod +x "$BIN_DIR"/* 2>/dev/null || true
+    fi
+    [ -x "$BIN_DIR/airupnp" ] || fail "缺少桥接程序：$BIN_DIR/airupnp"
+    case "$PORT" in
+        ''|*[!0-9]*) fail "无效的服务端口：$PORT" ;;
+    esac
+    if [ "$PORT" -lt 1024 ]; then
+        fail "服务端口必须 >= 1024（当前 $PORT）"
+    fi
+}
+
+health_probe() {
+    # 在子 shell 中完成 TCP 连接与请求：bash 在 /dev/tcp 连接失败时会向 stderr
+    # 打印 "Connection refused"，放在子 shell 里统一丢弃，避免污染应用日志。
+    ( exec 3<>"/dev/tcp/127.0.0.1/$PORT" || exit 1
+      printf 'GET /api/health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n' >&3
+      head -c 600 <&3
+    ) 2>/dev/null
+}
+
+health_check() {
+    local i
+    for i in $(seq 1 40); do
+        if ! check_pid "$(read_pid "$SERVER_PID" || true)"; then
+            return 1
+        fi
+        if health_probe | grep -q '"ok"'; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------- 启停
+start_server() {
+    local pid
+    pid="$(read_pid "$SERVER_PID" || true)"
+    if check_pid "$pid"; then
+        return 0
+    fi
+    rm -f "$SERVER_PID"
+
+    # 运行目录归属应用用户，确保降权后可写
+    if id -u "$RUN_USER" >/dev/null 2>&1; then
+        chown -R "$RUN_USER" "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+        chmod 750 "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+        # 网关套接字建在应用目录里：降权后的应用用户必须能在此创建/删除套接字，
+        # 否则统一网关拿不到后端，桌面入口就是空白页。
+        chgrp "$RUN_USER" "$APP" 2>/dev/null || true
+        chmod 775 "$APP" 2>/dev/null || true
+    fi
+    rm -f "$GATEWAY_SOCKET" 2>/dev/null || true
+
+    : >> "$MAIN_LOG"
+    : >> "$SERVER_LOG"
+    # 注意：不能用 `nohup run_as_app_user ...` —— nohup 是外部命令，看不见 shell 函数。
+    # 这里在子 shell 内直接调用函数；函数末尾用 exec 替换自身，因此 $! 就是最终 PID。
+    (
+        exec </dev/null
+        exec >>"$SERVER_LOG" 2>&1
+        run_as_app_user "$PYTHON" "$SERVER_DIR/main.py" \
+            --ui-dir "$UI_DIR" \
+            --version "$APPVER" \
+            --port "$PORT"
+    ) &
+    echo "$!" > "$SERVER_PID"
+    log_msg "管理服务已启动 (pid=$!，运行用户=$RUN_USER，端口=$PORT)"
+    sleep 1
+}
+
+stop_server() {
+    local pid
+    pid="$(read_pid "$SERVER_PID" || true)"
+    if check_pid "$pid"; then
+        log_msg "正在停止管理服务 (pid=$pid)"
+        kill -TERM "$pid" 2>/dev/null
+        local count=0
+        while check_pid "$pid" && [ "$count" -lt 20 ]; do
+            sleep 1
+            count=$((count + 1))
+        done
+        if check_pid "$pid"; then
+            log_msg "管理服务未及时退出，强制结束"
+            kill -KILL "$pid" 2>/dev/null
+        fi
+    fi
+    rm -f "$SERVER_PID"
+    # 管理服务正常退出时会自行回收子进程；被强杀时用 PID 文件兜底
+    kill_stale_bridge
+    rm -f "$GATEWAY_SOCKET" 2>/dev/null || true
+}
+
+do_start() {
+    preflight
+    trim_log "$MAIN_LOG"
+    trim_log "$SERVER_LOG"
+    if check_pid "$(read_pid "$SERVER_PID" || true)" && health_check; then
+        log_msg "服务已在运行，跳过启动"
+        return 0
+    fi
+    # 启动前清理陈旧进程：否则旧的 airupnp 占着端口，新的 bind 失败，
+    # 表现成「启动了但功能没变」。
+    kill_stale_bridge
+    log_msg "开始启动 AirConnect"
+    start_server
+    if ! health_check; then
+        log_msg "启动健康检查失败，正在回滚"
+        stop_server
+        fail "服务启动失败：管理界面未在 ${PORT} 端口就绪，请查看 $SERVER_LOG"
+    fi
+    log_msg "启动完成"
+    return 0
+}
+
+do_stop() {
+    log_msg "开始停止 AirConnect"
+    stop_server
+    trim_log "$MAIN_LOG"
+    trim_log "$SERVER_LOG"
+    log_msg "停止完成"
+    return 0
+}
+
+do_status() {
+    if check_pid "$(read_pid "$SERVER_PID" || true)"; then
+        exit 0
+    fi
+    rm -f "$SERVER_PID"
+    exit 3
+}
+
+case "${1:-}" in
+    start)   do_start ;;
+    stop)    do_stop ;;
+    status)  do_status ;;
+    *)       exit 1 ;;
+esac

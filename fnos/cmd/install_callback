@@ -1,0 +1,47 @@
+#!/bin/bash
+# 安装后：准备目录与权限、写初始配置（来自安装向导）、确保二进制可执行。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+APP="${TRIM_APPDEST:-/var/apps/airconnect/target}"
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/airconnect}"
+ETC="${TRIM_PKGETC:-/vol1/@appconf/airconnect}"
+HOME_DIR="${TRIM_PKGHOME:-/vol1/@apphome/airconnect}"
+RUN_USER="${TRIM_USERNAME:-airconnect}"
+PYTHON="/var/apps/python312/target/bin/python3"
+[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+LOGF="${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+
+mkdir -p "$VAR" "$ETC" "$HOME_DIR" || { echo "无法创建应用数据目录" > "$LOGF"; exit 1; }
+
+# 二进制必须可执行：安装包经过某些工具传输后执行位可能丢失（变成 644），
+# 那会表现成「进程 PID xxx 意外退出」且日志为空。
+chmod +x "$APP"/bin/* 2>/dev/null
+chmod +x "$CMD_DIR"/* 2>/dev/null
+chmod +x "$APP"/server/*.py 2>/dev/null
+# 兜底：确保降权后的应用用户可以读取所有程序文件
+chmod -R a+rX "$APP" 2>/dev/null
+
+# 初始配置：先建默认设置，再用安装向导里填的值覆盖。
+# 必须用数组传参：向导值可能含空格，用未加引号的变量会被 word-splitting 拆开。
+"$PYTHON" "$APP/server/settings_cli.py" init >/dev/null 2>&1 || true
+if ! "$PYTHON" "$APP/server/settings_cli.py" wizard; then
+    echo "向导配置写入失败，已保留默认配置（可在应用界面里修改）" > "$LOGF"
+fi
+
+if id -u "$RUN_USER" >/dev/null 2>&1; then
+    chown -R "$RUN_USER" "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+    chmod 750 "$VAR" "$ETC" "$HOME_DIR" 2>/dev/null
+    # 统一网关套接字位于应用目录内（airconnect.sock）：桌面入口能否打开取决于
+    # 降权后的应用用户能否在此创建套接字 —— 给组写权限并清掉残留。
+    chgrp "$RUN_USER" "$APP" 2>/dev/null || true
+    chmod 775 "$APP" 2>/dev/null || true
+    rm -f "$APP/airconnect.sock" 2>/dev/null || true
+fi
+exit 0

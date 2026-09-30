@@ -1,0 +1,29 @@
+#!/bin/bash
+# 应用设置变更后：写入向导里的新配置并重启。
+#
+# 校验失败时：恢复服务（用旧配置）并返回非 0，绝不让应用停在「已停止」状态。
+set -u
+
+# 生命周期脚本所在目录：飞牛把 fpk 里的 cmd/ 放在 /var/apps/<appname>/cmd，
+# 而 TRIM_APPDEST 指向 /vol<n>/@appcenter/<appname>（应用运行目录），两者不是同一棵树。
+# 用 $0 反推自己所在目录最可靠；TRIM_APPNAME 作为兜底（绝不硬编码应用名）。
+CMD_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [ ! -x "$CMD_DIR/main" ]; then
+    CMD_DIR="/var/apps/${TRIM_APPNAME:-airconnect}/cmd"
+fi
+APP="${TRIM_APPDEST:-/var/apps/airconnect/target}"
+PYTHON="/var/apps/python312/target/bin/python3"
+[ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+LOGF="${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+
+if ! "$PYTHON" "$APP/server/settings_cli.py" wizard; then
+    echo "配置校验失败，已保留原配置" > "$LOGF"
+    "$CMD_DIR/main" start >/dev/null 2>&1 || true
+    exit 1
+fi
+
+if ! "$CMD_DIR/main" start >/dev/null 2>&1; then
+    echo "应用设置已保存，但服务启动失败，请查看 ${TRIM_PKGVAR:-/vol1/@appdata/airconnect}/server.log" > "$LOGF"
+    exit 1
+fi
+exit 0

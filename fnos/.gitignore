@@ -1,0 +1,15 @@
+# 构建产物：桥接二进制由 scripts/build.sh 从上游源码编译产生，不入库
+app/bin/*
+!app/bin/.gitkeep
+
+# 打包产物
+dist/
+*.fpk
+
+# 本地构建/测试残留
+__pycache__/
+*.py[cod]
+.venv/
+.trim-cli/
+*.log
+*.rotate.tmp
