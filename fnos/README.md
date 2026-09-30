@@ -70,6 +70,10 @@ AirConnect-1.12.4-1.fpk
 `fnpack`（飞牛官方打包工具）已随仓库提交在 `fnos/fnpack/fnpack-linux-amd64`
 —— 官方下载地址返回的是 HTML 页面而不是二进制，云编译不能靠 curl。
 
+打包在仓库之外的独立暂存目录里进行（避免 fnpack 把仓库目录封成 `0000` ACL）：
+飞牛上默认 `/vol1/@apphome/airconnect/data/fpk-build`，其它机器退化为
+`$TMPDIR/airconnect-fpk-build`，也可用环境变量 `AIRCONNECT_STAGE` 指定。
+
 ### 2.1 为什么默认动态链接
 
 | | 动态（默认） | 静态（`--static`） |

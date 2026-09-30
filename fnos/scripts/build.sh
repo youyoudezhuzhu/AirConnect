@@ -23,7 +23,15 @@ ROOT_DIR="$(cd "$FNOX_DIR/.." && pwd)"
 DIST="$FNOX_DIR/dist"
 # 规则 #10：**绝不在仓库目录里直接 fnpack build**（fnpack 会把被处理目录封成
 # 0000 ACL，连属主都删不掉，且 cp -r 会把这个 ACL 复制出去）。一律用独立暂存目录。
-STAGE="${AIRCONNECT_STAGE:-/vol1/@apphome/airconnect/data/fpk-build}"
+# 暂存目录必须在仓库之外，且不能写死飞牛的路径 —— CI（GitHub Runner）根本没有
+# /vol1，硬编码会直接 "mkdir: cannot create directory '/vol1': Permission denied"。
+if [ -n "${AIRCONNECT_STAGE:-}" ]; then
+    STAGE="$AIRCONNECT_STAGE"
+elif [ -d /vol1/@apphome ]; then
+    STAGE="/vol1/@apphome/airconnect/data/fpk-build"   # 飞牛 NAS 上放数据卷
+else
+    STAGE="${TMPDIR:-/tmp}/airconnect-fpk-build"       # CI / 其它机器
+fi
 
 SKIP_NATIVE=0
 NO_PACK=0
